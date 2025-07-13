@@ -30,13 +30,6 @@ print("Connected to SQL!")
 ############################################################
 ############################################################
 
-
-
-
-
-############################################################
-############################################################
-
 ###### failed authorize -> redirect
 def failed_verification():
     REDIRECT_authn = "http://127.0.0.1:5000/authorize?redirect_uri=http%3a%2f%2f127.0.0.1%3a5001%2fportalAuth&scope=06c9f25f-f806-4cb1-bf53-2ef28dff0843+access&client_id=06c9f25f-f806-4cb1-bf53-2ef28dff0843"
