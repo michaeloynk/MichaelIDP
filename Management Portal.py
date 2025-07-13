@@ -80,7 +80,7 @@ def portalAuth():
 
     else:
         # check if access token exist
-        access_token = request.args.get('access_token')
+        access_token = request.form.get('access_token')
         if access_token:
             try:
                 # decrypt access token

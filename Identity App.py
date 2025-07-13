@@ -339,7 +339,7 @@ def token():
     except Exception as e:
         app.logger.error(f"Invalid user: {str(e)}")
 
-    payload = {
+    access_token_payload = {
         "iss": "MichaelIDP",
         "aud": redirect_uri,
         "sub": username,
@@ -348,10 +348,24 @@ def token():
         "scope": result[2],
         "nonce": random.SystemRandom().randint(10 ** 14, 10 ** 15 - 1)
     }
-    access_token = jwt.encode(payload, "JWTSecret", algorithm="HS256")
+    access_token = jwt.encode(access_token_payload, "JWTSecret", algorithm="HS256")
 
-    return redirect(f"{redirect_uri}?access_token={access_token}&username={username}")
+    response_html = f"""
+        <html>
+        <body>
+            <form id="tokenForm" action="{redirect_uri}" method="post">
+                <input type="hidden" name="access_token" value="{access_token}">
+                <input type="hidden" name="username" value="{username}">
+            </form>
+            <script>
+                document.getElementById('tokenForm').submit();
+            </script>
+        </body>
+        </html>
+        """
 
+    response = make_response(response_html)
+    return response
 
 if __name__ == '__main__':
     app.run(debug=True)
