@@ -15,3 +15,5 @@ Targets:
 4. Implement Entra ID synchronization
 5. Implement AD Identity Management
 6. Implement Entra ID Identity Management
+
+Blog: https://blog.michaeloy.site/?docs=build-your-own-identity-platform-5-management-portal
