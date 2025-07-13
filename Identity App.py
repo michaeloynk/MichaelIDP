@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template_string, redirect, url_for
+from flask import Flask, request, jsonify, render_template_string, redirect, url_for, make_response
 import secrets
 import base64
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -136,40 +136,29 @@ def register():
     try:
         cursor.execute("INSERT INTO user_credentials (username, password_hash) VALUES (?, ?)", (username, hashed_password))
         conn.commit()
+
+        # generate MFA Pass Code for authentication in /securityinfo
+        aes_key, kid = generate_aes_key_and_kid()
+        iv = secrets.token_bytes(16)
+        expiration_time = time.time() + 600
+        unencrypted_data = {
+            'kid': kid,
+            'username': username,
+            'expiration_time': expiration_time
+        }
+        mfa_pass_code = encrypt_data(str(unencrypted_data), aes_key, iv)
+        update_credentials_for_username(kid, aes_key, iv, username)
+
     except Exception as e:
         return jsonify({'error': f'Failed to register user: {e}'}), 500
 
     # Redirect to the MFA recommendation page
-    return redirect(url_for('recommendmfa', username=username))
-
-############################################################
-############################################################
-
-###### recommand user register MFA
-@app.route('/recommendmfa', methods=['GET', 'POST'])
-def recommendmfa():
-    username = request.args.get('username') or request.form.get('username')
-    if not username:
-        return 'Invalid username!'
-
-    if request.method == 'GET':
-        return render_template_string(f'''
-        <h3>Account Setup</h3>
-        <p>It's recommended to register MFA for security reasons, continue to register MFA?</p>
-        <form method="post" action="/recommendmfa">
-            <input type="hidden" name="username" value="{username}">
-            <input type="submit" name="mfa_choice" value="Yes">
-            <input type="submit" name="mfa_choice" value="No">
-        </form>
-        ''')
-
-    mfa_choice = request.form.get('mfa_choice')
-    if mfa_choice == 'Yes':
-        return redirect(url_for('securityinfo', username=username))
-    elif mfa_choice == 'No':
-        return 'Account has been setup successfully!'
-    else:
-        return 'Invalid choice!'
+    # token is valid, set mfa pass code cookie to make sure the user registration is valid
+    mfa_url = f"http://127.0.0.1:5000/securityinfo?&username={username}"
+    response = make_response(redirect(mfa_url))
+    # set cookie 'mfa_pass_code'
+    response.set_cookie('mfa_pass_code', mfa_pass_code, max_age=300)  # set 5 minute lifetime
+    return response
 
 ############################################################
 ############################################################
@@ -177,9 +166,38 @@ def recommendmfa():
 ###### MFA
 @app.route('/securityinfo', methods=['GET', 'POST'])
 def securityinfo():
+    mfa_pass_code = request.cookies.get('mfa_pass_code') # get the MFA pass code from cookie to make sure pwd registration is valid
     username = request.args.get('username') or request.form.get('username')
-    if not username:
+    if not username and mfa_pass_code:
         return 'Invalid username!'
+
+    # validate mfa pass code
+    aes_key, iv = retrieve_credentials(username)
+    if aes_key is None or iv is None:
+        return jsonify({'error': 'Invalid authorization code!'}), 401
+
+    try:
+        decrypted_data = decrypt_data(mfa_pass_code, aes_key, iv)
+        unencrypted_data = eval(decrypted_data)
+    except Exception as e:
+        return jsonify({'error': f'Invalid session: {str(e)}'}), 401
+
+    if time.time() > unencrypted_data['expiration_time']:
+        return jsonify({'error': 'Authorization code has expired!'}), 401
+
+    if unencrypted_data['username'] != username:
+        return jsonify({'error': 'Username mismatch!'}), 403
+
+    # clear authorize_data and kid from DB
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE user_credentials SET authorize_data = NULL, kids = NULL WHERE username = ?",
+            (username,)
+        )
+        conn.commit()
+    except Exception as e:
+        app.logger.error(f"Invalid user: {str(e)}")
 
     if request.method == 'GET':
         totp_key, qr_data = generate_totp_and_qr(username)
@@ -309,6 +327,17 @@ def token():
 
     if time.time() > unencrypted_data['expiration_time']:
         return jsonify({'error': 'Authorization code has expired!'}), 401
+
+    # clear authorize_data and kid from DB
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE user_credentials SET authorize_data = NULL, kids = NULL WHERE username = ?",
+            (username,)
+        )
+        conn.commit()
+    except Exception as e:
+        app.logger.error(f"Invalid user: {str(e)}")
 
     payload = {
         "iss": "MichaelIDP",
