@@ -64,6 +64,15 @@ def update_credentials_for_username(kid, aes_key, iv, username):
     cursor.execute("UPDATE user_credentials SET authorize_data = ?, kids = ? WHERE username = ?", authorize_data, kid, username)
     conn.commit()
 
+###### clear authorization data and kid
+def clear_credentials_for_username(username):
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE user_credentials SET authorize_data = NULL, kids = NULL WHERE username = ?",
+        (username,)
+    )
+    conn.commit()
+
 ###### get aes key and iv from DB
 def retrieve_credentials(username):
     cursor = conn.cursor()
@@ -72,7 +81,7 @@ def retrieve_credentials(username):
     if row:
         aes_key_b64, iv_b64 = row[0].split(':')
         return base64.b64decode(aes_key_b64), base64.b64decode(iv_b64)
-    return None, None
+    return 'Invalid session!'
 
 ###### verify client id and scope
 def verify_client_id_and_scope(client_id, scope):
@@ -179,6 +188,7 @@ def securityinfo():
     try:
         decrypted_data = decrypt_data(mfa_pass_code, aes_key, iv)
         unencrypted_data = eval(decrypted_data)
+
     except Exception as e:
         return jsonify({'error': f'Invalid session: {str(e)}'}), 401
 
@@ -187,17 +197,6 @@ def securityinfo():
 
     if unencrypted_data['username'] != username:
         return jsonify({'error': 'Username mismatch!'}), 403
-
-    # clear authorize_data and kid from DB
-    try:
-        cursor = conn.cursor()
-        cursor.execute(
-            "UPDATE user_credentials SET authorize_data = NULL, kids = NULL WHERE username = ?",
-            (username,)
-        )
-        conn.commit()
-    except Exception as e:
-        app.logger.error(f"Invalid user: {str(e)}")
 
     if request.method == 'GET':
         totp_key, qr_data = generate_totp_and_qr(username)
@@ -230,6 +229,8 @@ def securityinfo():
         </form>
         ''')
     elif action == 'Complete Setup':
+        if unencrypted_data['username'] == username:
+            clear_credentials_for_username(username)
         return 'Account has been setup successfully!'
     else:
         return 'Invalid session!'
@@ -329,15 +330,7 @@ def token():
         return jsonify({'error': 'Authorization code has expired!'}), 401
 
     # clear authorize_data and kid from DB
-    try:
-        cursor = conn.cursor()
-        cursor.execute(
-            "UPDATE user_credentials SET authorize_data = NULL, kids = NULL WHERE username = ?",
-            (username,)
-        )
-        conn.commit()
-    except Exception as e:
-        app.logger.error(f"Invalid user: {str(e)}")
+    clear_credentials_for_username(username)
 
     access_token_payload = {
         "iss": "MichaelIDP",
